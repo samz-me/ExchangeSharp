@@ -26,6 +26,8 @@ namespace ExchangeSharp
         public override string BaseUrl { get; set; } = "https://api.huobipro.com";
         public string BaseUrlV1 { get; set; } = "https://api.huobipro.com/v1";
         public override string BaseUrlWebSocket { get; set; } = "wss://api.huobipro.com/ws";
+        public string BaseUrlWebSocketV1 { get; set; } = "wss://api.huobipro.com/ws/v1";
+
         public string PrivateUrlV1 { get; set; } = "https://api.huobipro.com/v1";
 
         public bool IsMargin { get; set; }
@@ -156,16 +158,16 @@ namespace ExchangeSharp
                 var quantityStepSize = Math.Pow(10, -amountPrecision).ConvertInvariant<decimal>();
 
                 var market = new ExchangeMarket
-                             {
-                                 BaseCurrency = baseCurrency,
-                                 QuoteCurrency = quoteCurrency,
-                                 MarketSymbol = baseCurrency + quoteCurrency,
-                                 IsActive = true,
-                                 PriceStepSize = priceStepSize,
-                                 QuantityStepSize = quantityStepSize,
-                                 MinPrice = priceStepSize,
-                                 MinTradeSize = quantityStepSize,
-                             };
+                {
+                    BaseCurrency = baseCurrency,
+                    QuoteCurrency = quoteCurrency,
+                    MarketSymbol = baseCurrency + quoteCurrency,
+                    IsActive = true,
+                    PriceStepSize = priceStepSize,
+                    QuantityStepSize = quantityStepSize,
+                    MinPrice = priceStepSize,
+                    MinTradeSize = quantityStepSize,
+                };
 
 
                 markets.Add(market);
@@ -610,6 +612,33 @@ namespace ExchangeSharp
             return ParseOrder(data);
         }
 
+
+        public async Task<ExchangeOrderResult> MatchResultsDetailsAsync(string orderId, string marketSymbol = null)
+        {
+            /*
+            {
+              "status": "ok",
+              "data": [
+                {
+                  "id": 29553,
+                  "order-id": 59378,
+                  "match-id": 59335,
+                  "symbol": "ethusdt",
+                  "type": "buy-limit",
+                  "source": "api",
+                  "price": "100.1000000000",
+                  "filled-amount": "9.1155000000",
+                  "filled-fees": "0.0182310000",
+                  "created-at": 1494901400435
+                }
+              ]
+            }
+             */
+            var payload = await GetNoncePayloadAsync();
+            JToken data = await MakeJsonRequestAsync<JToken>($"/order/orders/{orderId}/matchresults", PrivateUrlV1, payload);
+            return ParseOrder(data);
+        }
+
         protected override async Task<IEnumerable<ExchangeOrderResult>> OnGetCompletedOrderDetailsAsync(string marketSymbol = null, DateTime? afterDate = null)
         {
             if (marketSymbol == null) { throw new APIException("symbol cannot be null"); }
@@ -667,7 +696,16 @@ namespace ExchangeSharp
             }
             else
             {
-                payload["type"] += "-limit";
+                if ((order.ExtraParameters != null || order.ExtraParameters.ContainsKey("limitType")))
+                {
+                    payload["type"] += "-" + (string)order.ExtraParameters["limitType"];
+                    order.ExtraParameters.Remove("limitType");
+                }
+                else
+                {
+                    payload["type"] += "-limit";
+                }
+
                 payload["price"] = outputPrice.ToStringInvariant();
             }
 
@@ -716,7 +754,7 @@ namespace ExchangeSharp
         }
 
 
-#endregion
+        #endregion
 
         #region Private Functions
 
@@ -817,6 +855,169 @@ namespace ExchangeSharp
             return account_id;
         }
         #endregion
+
+
+        public override IWebSocket GetOrderDetailsWebSocket(Action<ExchangeOrderResult> callback)
+        {
+            return ConnectWebSocket(string.Empty, async (_socket, msg) =>
+            {
+                var str = msg.ToStringFromUTF8Gzip();
+                JToken token = JToken.Parse(str);
+
+                if (token["status"] != null)
+                {
+                    return;
+                }
+                else if (token["ping"] != null)
+                {
+                    await _socket.SendMessageAsync(str.Replace("ping", "pong"));
+                    return;
+                }
+
+                var data = token["data"];
+                var orderChange = ParseOrderWebSocket(data);
+                callback(orderChange);
+
+            }, async (_socket) =>
+            {
+                long id = System.Threading.Interlocked.Increment(ref webSocketId);
+                string channel = $"orders.*";
+                await _socket.SendMessageAsync(new { sub = channel, id = "id" + id.ToStringInvariant() });
+            });
+
+        }
+
+        public ExchangeOrderResult ParseOrderWebSocket(JToken order)
+        {
+            /* MARKET
+           { op: '',
+             ts: 1544464438419,
+             topic: 'orders.trxbtc',
+             data:
+              { 'seq-id': 31742354279,
+                'order-id': 18993728717,
+                symbol: 'trxbtc',
+                'account-id': 5123800,
+                'order-amount': '1',
+                'order-price': '0',
+                'created-at': 1544464438313,
+                'order-type': 'sell-market',
+                'order-source': 'spot-web',
+                'order-state': 'filled',
+                role: 'taker',
+                price: '0.0000037729',
+                'filled-amount': '1',
+                'unfilled-amount': '0',
+                'filled-cash-amount': '0.0000037729',
+                'filled-fees': '0.0000000075458' }
+           }*/
+
+            return new ExchangeOrderResult
+            {
+                Amount = order["order-amount"].ConvertInvariant<decimal>(),
+                AmountFilled = order["filled-amount"].ConvertInvariant<decimal>(),
+                Price = order["price"].ConvertInvariant<decimal>(),
+                AveragePrice = order["price"].ConvertInvariant<decimal>(),
+                IsBuy = order["order-type"].ToStringInvariant().StartsWith("buy"),
+                OrderDate = CryptoUtility.UnixTimeStampToDateTimeMilliseconds(order["created-at"].ConvertInvariant<long>()),
+                OrderId = order["order-id"].ToStringInvariant(),
+                Result = ParseState(order["order-state"].ToStringInvariant()),
+                MarketSymbol = order["symbol"].ToStringInvariant()
+            };
+        }
+
+        protected override IWebSocket OnGetCompletedOrderDetailsWebSocket(Action<ExchangeOrderResult> callback)
+        {
+            return ConnectWebSocket(string.Empty, async (_socket, msg) =>
+            {
+                /*
+     { op: '',
+       ts: 1544464046419,
+       topic: 'orders.trxbtc',
+       data:
+        { 'seq-id': 31741708510,
+          'order-id': 18993311876,
+          symbol: 'trxbtc',
+          'account-id': 5123800,
+          'order-amount': '1',
+          'order-price': '0.0000037639',
+          'created-at': 1544464046340,
+          'order-type': 'buy-limit',
+          'order-source': 'spot-web',
+          'order-state': 'filled',
+          role: 'maker',
+          price: '0.0000037639',
+          'filled-amount': '1',
+          'unfilled-amount': '0',
+          'filled-cash-amount': '0.0000037639',
+          'filled-fees': '0.002' } }
+                      */
+
+                var str = msg.ToStringFromUTF8Gzip();
+
+                JToken token = JToken.Parse(str);
+
+                if (token["ping"] != null)
+                {
+                    await _socket.SendMessageAsync(str.Replace("ping", "pong"));
+                    return;
+                }
+
+                if (token["status"] != null)
+                {
+                    return;
+                }
+
+                if (token["op"].ToStringInvariant() == "auth")
+                {
+                    long id = System.Threading.Interlocked.Increment(ref webSocketId);
+
+                    var payload = new SortedDictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        { "op" , "sub" },
+                        { "topic" , "orders.*" },
+                        { "cid" , "id" + id.ToStringInvariant()  }
+                    };
+
+                    await _socket.SendMessageAsync(payload.GetJsonForPayload());
+                }
+
+                if (token["topic"].ToStringInvariant() == "orders.*")
+                {
+                    var data = token["data"];
+                    callback(ParseOrderWebSocket(data));
+                }
+
+                return;
+            }, async (_socket) =>
+            {
+                object nonce = await GenerateNonceAsync();
+
+                var payload = new SortedDictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["Timestamp"] = CryptoUtility.UnixTimeStampToDateTimeMilliseconds(nonce.ConvertInvariant<long>()).ToString("s"),
+                    ["AccessKeyId"] = PublicApiKey.ToUnsecureString(),
+                    ["SignatureMethod"] = "HmacSHA256",
+                    ["SignatureVersion"] = "2"
+                };
+
+                string msg = CryptoUtility.GetFormForPayload(payload, false, false, false);
+
+                // calculate signature
+                var content = String.Join("\n", new[] { "GET", "api.huobipro.com", "/ws/v1", msg });
+
+                var signature = CryptoUtility.SHA256SignBase64(content, PrivateApiKey.ToUnsecureBytesUTF8());
+
+                long id = System.Threading.Interlocked.Increment(ref webSocketId);
+                payload["Signature"] = signature;
+                payload["op"] = "auth";
+                payload["cid"] = "id" + id.ToStringInvariant();
+
+                string payloadJSON = payload.GetJsonForPayload();
+                var r1 = await _socket.SendMessageAsync(payloadJSON);
+            });
+        }
+
     }
 
     public partial class ExchangeName { public const string Huobi = "Huobi"; }
