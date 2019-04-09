@@ -1,4 +1,4 @@
-﻿/*
+/*
 MIT LICENSE
 
 Copyright 2017 Digital Ruby, LLC - http://www.digitalruby.com
@@ -503,7 +503,7 @@ namespace ExchangeSharp
         {
             List<ExchangeOrderResult> orders = new List<ExchangeOrderResult>();
             Dictionary<string, object> payload = await GetNoncePayloadAsync();
-            if (marketSymbol.Length != 0)
+            if (!string.IsNullOrWhiteSpace(marketSymbol))
             {
                 payload["symbol"] = marketSymbol;
             }
@@ -556,10 +556,11 @@ namespace ExchangeSharp
 
         protected override async Task<IEnumerable<ExchangeOrderResult>> OnGetCompletedOrderDetailsAsync(string marketSymbol = null, DateTime? afterDate = null)
         {
-            List<ExchangeOrderResult> orders = new List<ExchangeOrderResult>();
-            if (marketSymbol.Length == 0)
+            //new way
+            List<ExchangeOrderResult> trades = new List<ExchangeOrderResult>();
+            if (string.IsNullOrWhiteSpace(marketSymbol))
             {
-                orders.AddRange(await GetCompletedOrdersForAllSymbolsAsync(afterDate));
+                trades.AddRange(await GetCompletedOrdersForAllSymbolsAsync(afterDate));
             }
             else
             {
@@ -567,15 +568,38 @@ namespace ExchangeSharp
                 payload["symbol"] = marketSymbol;
                 if (afterDate != null)
                 {
-                    payload["startTime"] = Math.Round(afterDate.Value.UnixTimestampFromDateTimeMilliseconds());
+                    payload["timestamp"] = afterDate.Value.UnixTimestampFromDateTimeMilliseconds();
                 }
-                JToken token = await MakeJsonRequestAsync<JToken>("/allOrders", BaseUrlPrivate, payload);
-                foreach (JToken order in token)
+                JToken token = await MakeJsonRequestAsync<JToken>("/myTrades", BaseUrlPrivate, payload);
+                foreach (JToken trade in token)
                 {
-                    orders.Add(ParseOrder(order));
+                    trades.Add(ParseTrade(trade, marketSymbol));
                 }
             }
-            return orders;
+            return trades;
+
+            //old way
+
+            //List<ExchangeOrderResult> orders = new List<ExchangeOrderResult>();
+            //if (string.IsNullOrWhiteSpace(marketSymbol))
+            //{
+            //    orders.AddRange(await GetCompletedOrdersForAllSymbolsAsync(afterDate));
+            //}
+            //else
+            //{
+            //    Dictionary<string, object> payload = await GetNoncePayloadAsync();
+            //    payload["symbol"] = marketSymbol;
+            //    if (afterDate != null)
+            //    {
+            //        payload["startTime"] = Math.Round(afterDate.Value.UnixTimestampFromDateTimeMilliseconds());
+            //    }
+            //    JToken token = await MakeJsonRequestAsync<JToken>("/allOrders", BaseUrlPrivate, payload);
+            //    foreach (JToken order in token)
+            //    {
+            //        orders.Add(ParseOrder(order));
+            //    }
+            //}
+            //return orders;
         }
 
         private async Task<IEnumerable<ExchangeOrderResult>> GetMyTradesForAllSymbols(DateTime? afterDate)
@@ -619,7 +643,7 @@ namespace ExchangeSharp
         private async Task<IEnumerable<ExchangeOrderResult>> OnGetMyTradesAsync(string marketSymbol = null, DateTime? afterDate = null)
         {
             List<ExchangeOrderResult> trades = new List<ExchangeOrderResult>();
-            if (marketSymbol.Length == 0)
+            if (string.IsNullOrWhiteSpace(marketSymbol))
             {
                 trades.AddRange(await GetCompletedOrdersForAllSymbolsAsync(afterDate));
             }
@@ -643,7 +667,7 @@ namespace ExchangeSharp
         protected override async Task OnCancelOrderAsync(string orderId, string marketSymbol = null)
         {
             Dictionary<string, object> payload = await GetNoncePayloadAsync();
-            if (marketSymbol.Length == 0)
+            if (string.IsNullOrWhiteSpace(marketSymbol))
             {
                 throw new InvalidOperationException("Binance cancel order request requires symbol");
             }
@@ -941,7 +965,7 @@ namespace ExchangeSharp
         {
             // TODO: API supports searching on status, startTime, endTime
             Dictionary<string, object> payload = await GetNoncePayloadAsync();
-            if (currency.Length != 0)
+            if (!string.IsNullOrWhiteSpace(currency))
             {
                 payload["asset"] = currency;
             }

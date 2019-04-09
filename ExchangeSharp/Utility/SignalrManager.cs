@@ -46,6 +46,7 @@ namespace ExchangeSharp
             private Func<string, Task> callback;
             private string functionFullName;
             private bool disposed;
+            private bool initialConnectFired;
 
 			private TimeSpan _connectInterval = TimeSpan.FromHours(1.0);
 			/// <summary>
@@ -114,9 +115,15 @@ namespace ExchangeSharp
                 string functionFullName = _manager.GetFunctionFullName(functionName);
                 this.functionFullName = functionFullName;
 
-                while (true)
+                while (!_manager.disposed)
                 {
                     await _manager.AddListener(functionName, callback, param);
+
+                    if (_manager.hubConnection.State != ConnectionState.Connected)
+                    {
+                        await Task.Delay(100);
+                        continue;
+                    }
 
                     try
                     {
@@ -167,6 +174,13 @@ namespace ExchangeSharp
                     lock (_manager.sockets)
                     {
                         _manager.sockets.Add(this);
+                    }
+                    if (!initialConnectFired)
+                    {
+                        initialConnectFired = true;
+
+                        // kick off a connect event if this is the first time, the connect even can only get set after the open request is sent
+                        Task.Delay(1000).ContinueWith(async (t) => { await InvokeConnected(); }).ConfigureAwait(false).GetAwaiter();
                     }
                     return;
                 }
@@ -607,19 +621,15 @@ namespace ExchangeSharp
                 {
                     Logger.Info(ex.ToString());
                 }
-                // start a task to tear down the hub connection
-                await Task.Run(() =>
+                try
                 {
-                    try
-                    {
-                        // tear down the hub connection, we must re-create it whenever a web socket disconnects
-                        hubConnection?.Dispose();
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Info(ex.ToString());
-                    }
-                });
+                    // tear down the hub connection, we must re-create it whenever a web socket disconnects
+                    hubConnection?.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Info(ex.ToString());
+                }
             };
             await hubConnection.Start(autoTransport);
 

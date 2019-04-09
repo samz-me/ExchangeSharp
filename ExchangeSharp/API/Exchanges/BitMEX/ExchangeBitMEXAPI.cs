@@ -194,8 +194,8 @@ namespace ExchangeSharp
              */
 
             List<ExchangeMarket> markets = new List<ExchangeMarket>();
-            JToken allSymbols = await MakeJsonRequestAsync<JToken>("/instrument");
-            foreach (JToken marketSymbolToken in allSymbols)
+            JToken allSymbols = await MakeJsonRequestAsync<JToken>("/instrument?count=500&reverse=false");
+			foreach (JToken marketSymbolToken in allSymbols)
             {
                 var market = new ExchangeMarket
                 {
@@ -255,7 +255,7 @@ namespace ExchangeSharp
                 foreach (var t in data)
                 {
                     var marketSymbol = t["symbol"].ToStringInvariant();
-                    callback(new KeyValuePair<string, ExchangeTrade>(marketSymbol, t.ParseTrade("size", "price", "size", "timestamp", TimestampType.Iso8601, "trdMatchID")));
+                    callback(new KeyValuePair<string, ExchangeTrade>(marketSymbol, t.ParseTrade("size", "price", "side", "timestamp", TimestampType.Iso8601, "trdMatchID")));
                 }
                 return Task.CompletedTask;
             }, async (_socket) =>
@@ -352,7 +352,7 @@ namespace ExchangeSharp
                 {
                     marketSymbols = (await GetMarketSymbolsAsync()).ToArray();
                 }
-                await _socket.SendMessageAsync(new { op = "subscribe", args = marketSymbols.Select(s => "\"orderBookL2:" + this.NormalizeMarketSymbol(s) + "\"").ToArray() });
+                await _socket.SendMessageAsync(new { op = "subscribe", args = marketSymbols.Select(s => "orderBookL2:" + this.NormalizeMarketSymbol(s)).ToArray() });
             });
         }
 
@@ -542,7 +542,7 @@ namespace ExchangeSharp
                 AddOrderToPayload(order, subPayload);
                 orderRequests.Add(subPayload);
             }
-            payload[CryptoUtility.PayloadKeyArray] = orderRequests;
+            payload["orders"] = orderRequests;
             JToken token = await MakeJsonRequestAsync<JToken>("/order/bulk", BaseUrl, payload, "POST");
             foreach (JToken orderResultToken in token)
             {
@@ -558,6 +558,10 @@ namespace ExchangeSharp
             payload["side"] = order.IsBuy ? "Buy" : "Sell";
             payload["orderQty"] = order.Amount;
             payload["price"] = order.Price;
+            if (order.ExtraParameters.TryGetValue("execInst", out var execInst))
+            {
+                payload["execInst"] = execInst;
+            }
         }
 
         private ExchangeOrderResult ParseOrder(JToken token)
