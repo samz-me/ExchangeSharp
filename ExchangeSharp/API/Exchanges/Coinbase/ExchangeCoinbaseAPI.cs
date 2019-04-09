@@ -71,7 +71,7 @@ namespace ExchangeSharp
             decimal stop_price = result["stop_price"].ConvertInvariant<decimal>();
             decimal averagePrice = (amountFilled <= 0m ? 0m : executedValue / amountFilled);
             decimal fees = result["fill_fees"].ConvertInvariant<decimal>();
-            string marketSymbol = result["id"].ToStringInvariant(result["product_id"].ToStringInvariant());
+            string marketSymbol = result["product_id"].ToStringInvariant(result["id"].ToStringInvariant());
 
             ExchangeOrderResult order = new ExchangeOrderResult
             {
@@ -574,7 +574,9 @@ namespace ExchangeSharp
             switch (order.OrderType)
             {
                 case OrderType.Limit:
-                    payload["post_only"] = "true";
+                    // set payload["post_only"] to true for default scenario when order.ExtraParameters["post_only"] is not specified
+                    // to place non-post-only limit order one can set and pass order.ExtraParameters["post_only"]="false"
+                    payload["post_only"] = order.ExtraParameters.TryGetValueOrDefault("post_only", "true");
                     break;
                     
                 case OrderType.Stop:

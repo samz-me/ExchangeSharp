@@ -10,6 +10,8 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
+using System.Runtime.InteropServices;
+
 namespace ExchangeSharp
 {
     using Newtonsoft.Json;
@@ -282,9 +284,28 @@ namespace ExchangeSharp
                     }
                     else
                     {
-                        //parse snapshot here if needed
-                    }
-                }
+						//parse snapshot here if needed
+						if (channelIdToSymbol.TryGetValue(array[0].ConvertInvariant<int>(), out string symbol))
+						{
+							if (array[1] is JArray subarray)
+							{
+								for (int i = 0; i < subarray.Count - 1; i++)
+								{
+									ExchangeTrade trade = ParseTradeWebSocket(subarray[i]);
+									if (trade != null)
+									{
+										trade.Flags |= ExchangeTradeFlags.IsFromSnapshot;
+										if (i == subarray.Count - 1)
+										{
+											trade.Flags |= ExchangeTradeFlags.IsLastFromSnapshot;
+										}
+										callback(new KeyValuePair<string, ExchangeTrade>(symbol, trade));
+									}
+								}
+							}
+						}
+					}
+				}
                 else if (token["event"].ToStringInvariant() == "subscribed" && token["channel"].ToStringInvariant() == "trades")
                 {
                     //{"event": "subscribed","channel": "trades","chanId": 29654,"symbol": "tBTCUSD","pair": "BTCUSD"}
@@ -317,7 +338,8 @@ namespace ExchangeSharp
         protected override async Task<ExchangeOrderBook> OnGetOrderBookAsync(string marketSymbol, int maxCount = 100)
         {
             ExchangeOrderBook orders = new ExchangeOrderBook();
-            decimal[][] books = await MakeJsonRequestAsync<decimal[][]>("/book/t" + marketSymbol + "/P0?len=" + maxCount);
+            decimal[][] books = await MakeJsonRequestAsync<decimal[][]>("/book/t" + marketSymbol +
+	        "/P0?limit_bids=" + maxCount.ToStringInvariant() + "limit_asks=" + maxCount.ToStringInvariant());
             foreach (decimal[] book in books)
             {
                 if (book[2] > 0m)
@@ -403,11 +425,16 @@ namespace ExchangeSharp
 
         protected override async Task<Dictionary<string, decimal>> OnGetAmountsAsync()
         {
+            return await OnGetAmountsAsync("exchange");
+        }
+        
+        public async Task<Dictionary<string, decimal>> OnGetAmountsAsync(string type)
+        {
             Dictionary<string, decimal> lookup = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
-            JArray obj = await MakeJsonRequestAsync<Newtonsoft.Json.Linq.JArray>("/balances", BaseUrlV1, await GetNoncePayloadAsync());
+            JArray obj = await MakeJsonRequestAsync<JArray>("/balances", BaseUrlV1, await GetNoncePayloadAsync());
             foreach (JToken token in obj)
             {
-                if (token["type"].ToStringInvariant() == "exchange")
+                if (token["type"].ToStringInvariant() == type)
                 {
                     decimal amount = token["amount"].ConvertInvariant<decimal>();
                     if (amount > 0m)
@@ -418,11 +445,17 @@ namespace ExchangeSharp
             }
             return lookup;
         }
+        
+        protected override async Task<Dictionary<string, decimal>> OnGetMarginAmountsAvailableToTradeAsync(
+            bool includeZeroBalances = false)
+        {
+            return await OnGetAmountsAsync("trading");
+        }
 
         protected override async Task<Dictionary<string, decimal>> OnGetAmountsAvailableToTradeAsync()
         {
             Dictionary<string, decimal> lookup = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
-            JArray obj = await MakeJsonRequestAsync<Newtonsoft.Json.Linq.JArray>("/balances", BaseUrlV1, await GetNoncePayloadAsync());
+            JArray obj = await MakeJsonRequestAsync<JArray>("/balances", BaseUrlV1, await GetNoncePayloadAsync());
             foreach (JToken token in obj)
             {
                 if (token["type"].ToStringInvariant() == "exchange")
@@ -436,6 +469,8 @@ namespace ExchangeSharp
             }
             return lookup;
         }
+        
+        
 
         protected override async Task<ExchangeOrderResult> OnPlaceOrderAsync(ExchangeOrderRequest order)
         {
@@ -528,12 +563,12 @@ namespace ExchangeSharp
                 await _socket.SendMessageAsync(payloadJSON);
             });
         }
-
+ 
         protected override async Task OnCancelOrderAsync(string orderId, string marketSymbol = null)
         {
             Dictionary<string, object> payload = await GetNoncePayloadAsync();
             payload["order_id"] = orderId.ConvertInvariant<long>();
-            await MakeJsonRequestAsync<JToken>("/order/cancel", BaseUrlV1, payload);
+           var token= await MakeJsonRequestAsync<JToken>("/order/cancel", BaseUrlV1, payload);
         }
 
         protected override async Task<ExchangeDepositDetails> OnGetDepositAddressAsync(string currency, bool forceRegenerate = false)
