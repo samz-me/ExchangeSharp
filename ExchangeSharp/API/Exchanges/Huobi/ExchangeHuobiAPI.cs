@@ -23,12 +23,16 @@ namespace ExchangeSharp
 {
     public sealed partial class ExchangeHuobiAPI : ExchangeAPI
     {
-        public override string BaseUrl { get; set; } = "https://api.huobipro.com";
-        public string BaseUrlV1 { get; set; } = "https://api.huobipro.com/v1";
-        public override string BaseUrlWebSocket { get; set; } = "wss://api.huobipro.com/ws";
-        public string BaseUrlWebSocketV1 { get; set; } = "wss://api.huobipro.com/ws/v1";
+        public override string BaseUrl { get; set; } = "https://api.huobi.pro";
+        public string BaseUrlV1 { get; set; } = "https://api.huobi.pro/v1";
+        public override string BaseUrlWebSocket { get; set; } = "wss://api.huobi.pro/ws";
+        /// <summary>
+        /// Websocket Asset and Order
+        /// </summary>
+        public string BaseUrlWebSocketV1 { get; set; } = "wss://api.huobi.pro/ws/v1";
 
-        public string PrivateUrlV1 { get; set; } = "https://api.huobipro.com/v1";
+        public string PrivateUrlV1 { get; set; } = "https://api.huobi.pro/v1";
+        public int WebSocketOrderBookStep { get; set; }
 
         public bool IsMargin { get; set; }
         public string SubType { get; set; }
@@ -42,6 +46,7 @@ namespace ExchangeSharp
             MarketSymbolSeparator = string.Empty;
             MarketSymbolIsUppercase = false;
             WebSocketOrderBookType = WebSocketOrderBookType.FullBookAlways;
+            WebSocketOrderBookStep = 0;
         }
 
         public override string ExchangeMarketSymbolToGlobalMarketSymbol(string marketSymbol)
@@ -362,7 +367,7 @@ namespace ExchangeSharp
                 {
                     long id = System.Threading.Interlocked.Increment(ref webSocketId);
                     var normalizedSymbol = NormalizeMarketSymbol(symbol);
-                    string channel = $"market.{normalizedSymbol}.depth.step0";
+                    string channel = $"market.{normalizedSymbol}.depth.step{WebSocketOrderBookStep}";
                     await _socket.SendMessageAsync(new { sub = channel, id = "id" + id.ToStringInvariant() });
                 }
             });
